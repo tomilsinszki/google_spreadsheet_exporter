@@ -8,6 +8,7 @@ namespace :export do
   @rateable_names = {}
   @question_texts = {}
   @answer_texts = {}
+  @quiz_results = Array.new
   @spreadsheet = nil
   @start_date_string = Time.now.strftime("%Y-%m-01 00:00:00")
   @end_date_string = 1.day.ago.strftime("%Y-%m-%d 23:59:59")
@@ -30,9 +31,13 @@ namespace :export do
     puts
 
     setup_connection_to_spreadsheet
+
+    fetch_quiz_results
+    render_quiz_results
+
     fetch_questions_and_answer_counts
     fetch_all_answer_texts
-    update_google_spreadsheet
+    render_sub_rating_answer_results
   end
 
   def setup_connection_to_spreadsheet
@@ -57,8 +62,66 @@ namespace :export do
     @spreadsheet = session.spreadsheet_by_key(@spreadsheet_key).worksheets[0]
   end
 
+  def fetch_quiz_results
+    sql = 
+    "SELECT
+      name AS rateable_name,
+      (sum-wrong) AS correct_answer_count,
+      ROUND((100*(sum-wrong)/sum)) AS correct_answer_percent,
+      wrong AS wrong_answer_count
+      FROM (
+        SELECT
+          rateable.name,
+          COUNT(quiz_reply.id) AS sum,
+          COUNT(quiz_reply.wrong_given_answer_id) AS wrong
+      FROM rateable
+      LEFT JOIN quiz ON quiz.rateable_id=rateable.id 
+        AND '#{@start_date_string}' <= quiz.created
+        AND quiz.created <= '#{@end_date_string}'
+      LEFT JOIN quiz_reply ON quiz_reply.quiz_id=quiz.id
+      WHERE
+        rateable.is_active=1 AND
+        rateable.collection_id=#{@rateable_collection_id}
+      GROUP BY rateable.id
+      ORDER BY rateable.name ASC
+    ) quizresults"
+
+    rows = ActiveRecord::Base.connection.execute(sql)
+
+    rows.each(:as => :hash) do |row|
+      @quiz_results.push({
+        rateable_name: row['rateable_name'],
+        correct_answer_count: row['correct_answer_count'].to_i,
+        wrong_answer_count: row['wrong_answer_count'].to_i,
+        correct_answer_percent: row['correct_answer_percent'].to_i
+      })
+    end
+  end
+
+  def render_quiz_results
+    @spreadsheet[@current_line_number, 1] = "Dolgozói kvíz"
+    @current_line_number += 2
+
+    @spreadsheet[@current_line_number, 2] = "Helyes válaszok"
+    @spreadsheet[@current_line_number, 3] = "Helytelen válaszok"
+    @spreadsheet[@current_line_number, 4] = "Helyes válasz arány"
+    @current_line_number += 1
+
+    @quiz_results.each do |quiz_result|
+      @spreadsheet[@current_line_number, 1] = quiz_result[:rateable_name]
+      @spreadsheet[@current_line_number, 2] = quiz_result[:correct_answer_count]
+      @spreadsheet[@current_line_number, 3] = quiz_result[:wrong_answer_count]
+      @spreadsheet[@current_line_number, 4] = "#{quiz_result[:correct_answer_percent]}%"
+      @current_line_number += 1
+    end
+    @current_line_number += 3
+
+    @spreadsheet.save()
+  end
+
   def fetch_questions_and_answer_counts
-    sql = "SELECT
+    sql = 
+      "SELECT
         rateable.id AS rateable_id,
         rateable.name AS rateable_name,
         sub_rating_question.id AS question_id,
@@ -67,20 +130,20 @@ namespace :export do
         sub_rating_answer.id AS answer_id,
         sub_rating_answer.text AS answer_text,
         COUNT(sub_rating_answer.id) AS answer_count
-    FROM rateable
-    LEFT JOIN rating ON rating.rateable_id=rateable.id
-    LEFT JOIN sub_rating ON sub_rating.rating_id=rating.id
+      FROM rateable
+      LEFT JOIN rating ON rating.rateable_id=rateable.id
+      LEFT JOIN sub_rating ON sub_rating.rating_id=rating.id
         AND '#{@start_date_string}' <= rating.created
         AND rating.created <= '#{@end_date_string}'
-    LEFT JOIN sub_rating_answer ON sub_rating.answer_id=sub_rating_answer.id
-    LEFT JOIN sub_rating_answer_type ON sub_rating_answer_type.id=sub_rating_answer.type_id
-    LEFT JOIN sub_rating_question ON sub_rating_answer.question_id=sub_rating_question.id
-    WHERE
+      LEFT JOIN sub_rating_answer ON sub_rating.answer_id=sub_rating_answer.id
+      LEFT JOIN sub_rating_answer_type ON sub_rating_answer_type.id=sub_rating_answer.type_id
+      LEFT JOIN sub_rating_question ON sub_rating_answer.question_id=sub_rating_question.id
+      WHERE
         rateable.collection_id=#{@rateable_collection_id} AND
         sub_rating.id IS NOT NULL AND
         rateable.is_active=1
-    GROUP BY rateable.id, sub_rating_answer.id
-    ORDER BY sub_rating_question.text, rateable.name, sub_rating_answer_type.name;"
+      GROUP BY rateable.id, sub_rating_answer.id
+      ORDER BY sub_rating_question.text, rateable.name, sub_rating_answer_type.name;"
 
     rows = ActiveRecord::Base.connection.execute(sql)
 
@@ -157,7 +220,10 @@ namespace :export do
     end
   end
 
-  def update_google_spreadsheet
+  def render_sub_rating_answer_results
+    @spreadsheet[@current_line_number, 1] = "Ügyfél kérdőív"
+    @current_line_number += 2
+
     l1 = @current_line_number
     c1 = 1
     @question_texts.each do |question_id, question_text|
