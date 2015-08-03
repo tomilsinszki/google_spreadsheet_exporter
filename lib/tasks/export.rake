@@ -9,6 +9,7 @@ namespace :export do
   @question_texts = {}
   @answer_texts = {}
   @quiz_results = Array.new
+  @contact_and_rating_results = Array.new
   @spreadsheet = nil
   @start_date_string = Time.now.strftime("%Y-%m-01 00:00:00")
   @end_date_string = 1.day.ago.strftime("%Y-%m-%d 23:59:59")
@@ -31,6 +32,9 @@ namespace :export do
     puts
 
     setup_connection_to_spreadsheet
+
+    fetch_contact_and_rating_results
+    render_contact_and_rating_results
 
     fetch_quiz_results
     render_quiz_results
@@ -60,6 +64,58 @@ namespace :export do
     session = GoogleDrive.login_with_oauth(access_token)
 
     @spreadsheet = session.spreadsheet_by_key(@spreadsheet_key).worksheets[0]
+  end
+
+  def fetch_contact_and_rating_results
+    sql = 
+      "SELECT
+        rateable.name AS rateable_name,
+        COUNT(DISTINCT contact.id) AS contact_count,
+        COUNT(DISTINCT rating.id) AS rating_count,
+        AVG(rating.stars) AS rating_avg
+      FROM rateable
+      LEFT JOIN contact ON contact.rateable_id = rateable.id 
+        AND '#{@start_date_string}' <= contact.contact_happened_at
+        AND contact.contact_happened_at <= '#{@end_date_string}'
+      LEFT JOIN rating ON contact.rateable_id = rating.rateable_id
+        AND '#{@start_date_string}' <= rating.created
+        AND rating.created <= '#{@end_date_string}'
+      WHERE rateable.is_active=1 AND
+      rateable.collection_id=#{@rateable_collection_id}
+      GROUP BY rateable.id
+      ORDER BY rateable.name ASC"
+
+    rows = ActiveRecord::Base.connection.execute(sql)
+
+    rows.each(:as => :hash) do |row|
+      @contact_and_rating_results.push({
+        rateable_name: row['rateable_name'],
+        contact_count: row['contact_count'].to_i,
+        rating_count: row['rating_count'].to_i,
+        rating_avg: row['rating_avg'].to_f
+      })
+    end
+  end
+
+  def render_contact_and_rating_results
+    @spreadsheet[@current_line_number, 1] = "Ügyfél értékelések"
+    @current_line_number += 2
+
+    @spreadsheet[@current_line_number, 2] = "Rögzített kontaktusok"
+    @spreadsheet[@current_line_number, 3] = "Beérkezett értékelések"
+    @spreadsheet[@current_line_number, 4] = "Átlagos értékelés"
+    @current_line_number += 1
+
+    @contact_and_rating_results.each do |contact_and_rating_result|
+      @spreadsheet[@current_line_number, 1] = contact_and_rating_result[:rateable_name]
+      @spreadsheet[@current_line_number, 2] = contact_and_rating_result[:contact_count]
+      @spreadsheet[@current_line_number, 3] = contact_and_rating_result[:rating_count]
+      @spreadsheet[@current_line_number, 4] = contact_and_rating_result[:rating_avg]
+      @current_line_number += 1
+    end
+    @current_line_number += 3
+
+    @spreadsheet.save()
   end
 
   def fetch_quiz_results
