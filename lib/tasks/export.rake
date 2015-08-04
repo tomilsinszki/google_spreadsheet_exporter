@@ -33,6 +33,8 @@ namespace :export do
 
     setup_connection_to_spreadsheet
 
+    render_header
+
     fetch_contact_and_rating_results
     render_contact_and_rating_results
 
@@ -64,6 +66,19 @@ namespace :export do
     session = GoogleDrive.login_with_oauth(access_token)
 
     @spreadsheet = session.spreadsheet_by_key(@spreadsheet_key).worksheets[0]
+  end
+
+  def render_header
+    collection_name = ""
+
+    sql = "SELECT rateable_collection.name AS name FROM rateable_collection WHERE id=#{@rateable_collection_id}"
+    rows = ActiveRecord::Base.connection.execute(sql)
+    rows.each(:as => :hash) do |row|
+      collection_name = row["name"].capitalize
+    end
+
+    @spreadsheet[@current_line_number, 1] = "#{collection_name} #{@start_date_string[0, 10]} - #{@end_date_string[0, 10]}"
+    @current_line_number += 3
   end
 
   def fetch_contact_and_rating_results
