@@ -92,7 +92,7 @@ namespace :export do
       LEFT JOIN contact ON contact.rateable_id = rateable.id 
         AND '#{@start_date_string}' <= contact.contact_happened_at
         AND contact.contact_happened_at <= '#{@end_date_string}'
-      LEFT JOIN rating ON contact.rateable_id = rating.rateable_id
+      LEFT JOIN rating ON rating.rateable_id = rateable.id
         AND '#{@start_date_string}' <= rating.created
         AND rating.created <= '#{@end_date_string}'
       WHERE rateable.is_active=1 AND
