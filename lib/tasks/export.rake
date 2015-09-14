@@ -32,6 +32,7 @@ namespace :export do
     puts
 
     setup_connection_to_spreadsheet
+    clear_spreadsheet
 
     render_header
 
@@ -110,6 +111,16 @@ namespace :export do
         rating_avg: row['rating_avg'].to_f
       })
     end
+  end
+
+  def clear_spreadsheet
+    for row_index in 1..200
+      for column_index in 1..20
+        @spreadsheet[row_index, column_index] = nil
+      end
+    end
+
+    @spreadsheet.save()
   end
 
   def render_contact_and_rating_results
